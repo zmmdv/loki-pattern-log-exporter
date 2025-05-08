@@ -1,24 +1,15 @@
+kubectl apply -f - <<EOF
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: loki-pattern-exporter-configs
+  namespace: default
 data:
   error-config.yaml: |
     loki:
-      endpoint: "http://loki:3100"
-      query: '{job="test-logs"}'
-      pattern: "error|exception|critical"
+      endpoint: "http://loki-read.monitoring.svc.cluster.local:3100"
+      query: '{app="log-generator"} |= "Hello"'
       interval: "1m"
-    slack:
-      token: "${SLACK_TOKEN}"
-      channel: "${SLACK_CHANNEL}"
-
-  warning-config.yaml: |
-    loki:
-      endpoint: "http://loki:3100"
-      query: '{job="test-logs"}'
-      pattern: "warning|warn"
-      interval: "5m"
     slack:
       token: "${SLACK_TOKEN}"
       channel: "${SLACK_CHANNEL}"
@@ -28,6 +19,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: loki-pattern-exporter
+  namespace: default
 spec:
   replicas: 1
   selector:
@@ -40,7 +32,7 @@ spec:
     spec:
       containers:
       - name: loki-pattern-exporter
-        image: loki-pattern-exporter:latest
+        image: ghcr.io/zmmdv/loki-pattern-log-exporter:sha-1e29b07
         ports:
         - containerPort: 8080
           name: health
@@ -69,4 +61,5 @@ spec:
       volumes:
       - name: config-volume
         configMap:
-          name: loki-pattern-exporter-configs 
+          name: loki-pattern-exporter-configs
+EOF

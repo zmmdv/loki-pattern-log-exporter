@@ -48,15 +48,15 @@ http.mount("https://", adapter)
 
 @dataclass
 class LokiConfig:
-    endpoint: str
-    query: str
+    endpoint: str = "http://localhost:3100"
+    query: str = '{job="default"}'
     pattern: str = ".*"  # Default pattern that matches everything
-    interval: str
+    interval: str = "1m"  # Default interval of 1 minute
 
 @dataclass
 class SlackConfig:
-    token: str
-    channel: str
+    token: str = ""
+    channel: str = ""
 
 @dataclass
 class Config:
