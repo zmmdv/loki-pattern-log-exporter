@@ -56,6 +56,7 @@ class LokiConfig:
     region_emoji: str = ":earth_americas:"
     region_text: str = "default-region"
     alert_name: str = "PatternMatchFound"  # Custom alert name
+    description: str = ""  # Optional description for the alert
 
 @dataclass
 class SlackConfig:
@@ -135,7 +136,8 @@ def load_config(config_path: str) -> List[Config]:
             interval=os.getenv('LOKI_INTERVAL', config_data['loki']['interval']),
             region_emoji=os.getenv('REGION_EMOJI', config_data['loki'].get('region_emoji', ':earth_americas:')),
             region_text=os.getenv('REGION_TEXT', config_data['loki'].get('region_text', 'default-region')),
-            alert_name=os.getenv('ALERT_NAME', config_data['loki'].get('alert_name', 'PatternMatchFound'))
+            alert_name=os.getenv('ALERT_NAME', config_data['loki'].get('alert_name', 'PatternMatchFound')),
+            description=os.getenv('DESCRIPTION', config_data['loki'].get('description', ''))
         )
             
         # Load Slack config with environment variable fallback
@@ -183,6 +185,8 @@ def send_slack_notification(config: Config, log_entry: tuple, cache: MessageCach
             f"> Timestamp: {ts}\n"
             f"> Message: {log_message}"
         )
+        if config.loki.description:
+            slack_text += f"\n> Description: {config.loki.description}"
         client = WebClient(token=config.slack.token)
         response = client.chat_postMessage(
             channel=config.slack.channel,
