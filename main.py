@@ -159,9 +159,17 @@ def query_loki(config: Config) -> List[str]:
                 return []
 
         # Calculate the time range based on the interval
-        end_time = int(time.time() * 1e9)  # Current time in nanoseconds
+        current_time = time.time()
         interval_seconds = parse_interval(config.loki.interval)
-        start_time = end_time - (interval_seconds * 1e9)
+        
+        # Ensure end time is current time and start time is interval seconds before
+        end_time = int(current_time * 1e9)  # Current time in nanoseconds
+        start_time = int((current_time - interval_seconds) * 1e9)  # Start time in nanoseconds
+        
+        # Verify timestamps
+        if start_time >= end_time:
+            logger.error(f"Invalid time range: start={start_time}, end={end_time}")
+            return []
         
         # Construct the query with proper encoding
         base_query = config.loki.query.strip()
@@ -181,6 +189,7 @@ def query_loki(config: Config) -> List[str]:
         # Log the actual query for debugging
         logger.debug(f"Loki query: {base_query}")
         logger.debug(f"Query params: {query_params}")
+        logger.debug(f"Time range: {datetime.fromtimestamp(current_time - interval_seconds)} to {datetime.fromtimestamp(current_time)}")
         
         # Make the request to Loki
         response = http.get(
