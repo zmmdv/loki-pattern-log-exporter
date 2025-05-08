@@ -166,9 +166,8 @@ def extract_app_from_query(query: str) -> str:
     return "unknown"
 
 def send_slack_notification(config: Config, log_entry: tuple, cache: MessageCache):
-    """Send notification to Slack if message hasn't been sent recently."""
     timestamp_ns, log_message = log_entry
-    if cache.has_message(log_message):
+    if cache.has_message(timestamp_ns):  # Use timestamp as the deduplication key
         return
     try:
         # Format timestamp
@@ -193,7 +192,7 @@ def send_slack_notification(config: Config, log_entry: tuple, cache: MessageCach
             text=slack_text
         )
         if response['ok']:
-            cache.add_message(log_message)
+            cache.add_message(timestamp_ns)  # Use timestamp as the deduplication key
             logger.info(f"Notification sent to Slack for config {config.name}")
     except SlackApiError as e:
         logger.error(f"Error sending Slack notification: {str(e)}")
