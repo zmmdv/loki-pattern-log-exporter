@@ -8,6 +8,9 @@ ARG TARGETVARIANT
 
 WORKDIR /app
 
+# Install git for go mod download
+RUN apk add --no-cache git
+
 # Copy go mod and sum files
 COPY go.mod ./
 
