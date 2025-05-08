@@ -10,6 +10,7 @@ data:
       endpoint: "http://loki-read.monitoring.svc.cluster.local:3100"
       query: '{app="log-generator"} |= "Hello"'
       interval: "1m"
+      region: "eu-west-1"
     slack:
       token: "${SLACK_TOKEN}"
       channel: "${SLACK_CHANNEL}"

@@ -53,6 +53,7 @@ class LokiConfig:
     query: str = '{job="default"}'
     pattern: str = ".*"  # Default pattern that matches everything
     interval: str = "1m"  # Default interval of 1 minute
+    region: str = "default-region"  # New field for region
 
 @dataclass
 class SlackConfig:
@@ -129,7 +130,8 @@ def load_config(config_path: str) -> List[Config]:
             endpoint=os.getenv('LOKI_ENDPOINT', config_data['loki']['endpoint']),
             query=os.getenv('LOKI_QUERY', config_data['loki']['query']).strip(),  # Strip whitespace
             pattern=os.getenv('LOKI_PATTERN', config_data['loki'].get('pattern', '.*')),
-            interval=os.getenv('LOKI_INTERVAL', config_data['loki']['interval'])
+            interval=os.getenv('LOKI_INTERVAL', config_data['loki']['interval']),
+            region=os.getenv('REGION', config_data['loki'].get('region', 'default-region'))
         )
             
         # Load Slack config with environment variable fallback
@@ -150,8 +152,44 @@ def load_config(config_path: str) -> List[Config]:
     
     return configs
 
-def query_loki(config: Config) -> List[str]:
-    """Query Loki for logs matching the pattern."""
+def extract_app_from_query(query: str) -> str:
+    """Extract the app name from a Loki query string like {app="my-app"}"""
+    match = re.search(r'app\s*=\s*"([^"]+)"', query)
+    if match:
+        return match.group(1)
+    return "unknown"
+
+def send_slack_notification(config: Config, log_entry: tuple, cache: MessageCache):
+    """Send notification to Slack if message hasn't been sent recently."""
+    timestamp_ns, log_message = log_entry
+    if cache.has_message(log_message):
+        return
+    try:
+        # Format timestamp
+        ts = datetime.fromtimestamp(int(timestamp_ns) / 1e9).strftime('%Y-%m-%d %H:%M:%S')
+        # Extract app name
+        app_name = extract_app_from_query(config.loki.query)
+        # Format Slack message
+        slack_text = (
+            f"*Region:* {config.loki.region}\n"
+            f"*Timestamp:* {ts}\n"
+            f"*Service:* {app_name}\n"
+            f"*Message:* ```{log_message}```"
+        )
+        client = WebClient(token=config.slack.token)
+        response = client.chat_postMessage(
+            channel=config.slack.channel,
+            text=slack_text
+        )
+        if response['ok']:
+            cache.add_message(log_message)
+            logger.info(f"Notification sent to Slack for config {config.name}")
+    except SlackApiError as e:
+        logger.error(f"Error sending Slack notification: {str(e)}")
+        app_state['error_count'] += 1
+
+def query_loki(config: Config) -> List[tuple]:
+    """Query Loki for logs matching the pattern. Returns list of (timestamp, message) tuples."""
     try:
         # Check Loki connection before querying
         if not app_state['loki_connected']:
@@ -204,12 +242,13 @@ def query_loki(config: Config) -> List[str]:
         if 'data' not in data or 'result' not in data['data']:
             return []
         
-        # Extract log lines
+        # Extract log lines as (timestamp, message) tuples
         matching_logs = []
         for stream in data['data']['result']:
             for value in stream['values']:
                 log_line = value[1]  # The log message is the second element
-                matching_logs.append(log_line)
+                timestamp_ns = value[0]  # The timestamp in nanoseconds
+                matching_logs.append((timestamp_ns, log_line))
         
         return matching_logs
         
@@ -238,24 +277,6 @@ def parse_interval(interval: str) -> int:
         return value * 3600
     else:
         raise ValueError(f"Invalid interval unit: {unit}")
-
-def send_slack_notification(config: Config, message: str, cache: MessageCache):
-    """Send notification to Slack if message hasn't been sent recently."""
-    if cache.has_message(message):
-        return
-        
-    try:
-        client = WebClient(token=config.slack.token)
-        response = client.chat_postMessage(
-            channel=config.slack.channel,
-            text=f"*{config.name} - Pattern Match Found*\n```{message}```"
-        )
-        if response['ok']:
-            cache.add_message(message)
-            logger.info(f"Notification sent to Slack for config {config.name}")
-    except SlackApiError as e:
-        logger.error(f"Error sending Slack notification: {str(e)}")
-        app_state['error_count'] += 1
 
 @app.route('/health')
 def health_check():
@@ -325,8 +346,8 @@ def main():
                             matching_logs = query_loki(config)
                             
                             # Send notifications for each matching log
-                            for log in matching_logs:
-                                send_slack_notification(config, log, cache)
+                            for log_entry in matching_logs:
+                                send_slack_notification(config, log_entry, cache)
                                 
                         except Exception as e:
                             logger.error(f"Error processing config {config.name}: {str(e)}")
