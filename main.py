@@ -50,7 +50,7 @@ http.mount("https://", adapter)
 class LokiConfig:
     endpoint: str
     query: str
-    pattern: str
+    pattern: str = ".*"  # Default pattern that matches everything
     interval: str
 
 @dataclass
@@ -127,7 +127,7 @@ def load_config(config_path: str) -> List[Config]:
         loki_config = LokiConfig(
             endpoint=os.getenv('LOKI_ENDPOINT', config_data['loki']['endpoint']),
             query=os.getenv('LOKI_QUERY', config_data['loki']['query']),
-            pattern=os.getenv('LOKI_PATTERN', config_data['loki']['pattern']),
+            pattern=os.getenv('LOKI_PATTERN', config_data['loki'].get('pattern', '.*')),  # Default to '.*' if not specified
             interval=os.getenv('LOKI_INTERVAL', config_data['loki']['interval'])
         )
             
