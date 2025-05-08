@@ -1,4 +1,4 @@
-FROM golang:1.21-alpine AS builder
+FROM golang:1.22-alpine AS builder
 
 WORKDIR /app
 
@@ -9,13 +9,13 @@ RUN apk add --no-cache git
 COPY go.mod ./
 
 # Download dependencies
-RUN go mod tidy && go mod download
+RUN go mod download
 
 # Copy source code
 COPY . .
 
 # Build the application
-RUN go mod tidy && CGO_ENABLED=0 GOOS=linux go build -o loki-pattern-exporter
+RUN CGO_ENABLED=0 GOOS=linux go build -o loki-pattern-exporter
 
 # Final stage
 FROM alpine:latest
