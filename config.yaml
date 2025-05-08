@@ -5,5 +5,5 @@ loki:
   interval: "1m"
 
 slack:
-  token: "your-slack-token"
-  channel: "your-channel-id"
+  token: "${SLACK_TOKEN}"
+  channel: "${SLACK_CHANNEL}"
