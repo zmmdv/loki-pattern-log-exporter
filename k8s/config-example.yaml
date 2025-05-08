@@ -10,7 +10,11 @@ data:
       endpoint: "http://loki-read.monitoring.svc.cluster.local:3100"
       query: '{app="log-generator"} |= "Hello"'
       interval: "1m"
-      region: "eu-west-1"
+      pattern: "Hello"
+      interval: "1m"
+      region_emoji: ":flag_us:"
+      region_text: "dev-3"
+      alert_name: "MyCustomAlert"
     slack:
       token: "${SLACK_TOKEN}"
       channel: "${SLACK_CHANNEL}"

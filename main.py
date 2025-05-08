@@ -53,7 +53,9 @@ class LokiConfig:
     query: str = '{job="default"}'
     pattern: str = ".*"  # Default pattern that matches everything
     interval: str = "1m"  # Default interval of 1 minute
-    region: str = "default-region"  # New field for region
+    region_emoji: str = ":earth_americas:"
+    region_text: str = "default-region"
+    alert_name: str = "PatternMatchFound"  # Custom alert name
 
 @dataclass
 class SlackConfig:
@@ -128,10 +130,12 @@ def load_config(config_path: str) -> List[Config]:
         # Load Loki config with environment variable fallback
         loki_config = LokiConfig(
             endpoint=os.getenv('LOKI_ENDPOINT', config_data['loki']['endpoint']),
-            query=os.getenv('LOKI_QUERY', config_data['loki']['query']).strip(),  # Strip whitespace
+            query=os.getenv('LOKI_QUERY', config_data['loki']['query']).strip(),
             pattern=os.getenv('LOKI_PATTERN', config_data['loki'].get('pattern', '.*')),
             interval=os.getenv('LOKI_INTERVAL', config_data['loki']['interval']),
-            region=os.getenv('REGION', config_data['loki'].get('region', 'default-region'))
+            region_emoji=os.getenv('REGION_EMOJI', config_data['loki'].get('region_emoji', ':earth_americas:')),
+            region_text=os.getenv('REGION_TEXT', config_data['loki'].get('region_text', 'default-region')),
+            alert_name=os.getenv('ALERT_NAME', config_data['loki'].get('alert_name', 'PatternMatchFound'))
         )
             
         # Load Slack config with environment variable fallback
@@ -169,13 +173,15 @@ def send_slack_notification(config: Config, log_entry: tuple, cache: MessageCach
         ts = datetime.fromtimestamp(int(timestamp_ns) / 1e9).strftime('%Y-%m-%d %H:%M:%S')
         # Extract app name
         app_name = extract_app_from_query(config.loki.query)
-        # Choose emoji for region (customize as needed)
-        region_emoji = ":us:" if "us" in config.loki.region.lower() else ":earth_americas:"
+        # Use emoji and region text from config
+        region_emoji = config.loki.region_emoji
+        region_text = config.loki.region_text
         # Format Slack message
         slack_text = (
-            f"{region_emoji} *{config.loki.region} | {app_name}*  :fire: *PatternMatchFound*\n"
-            f"> *{ts}*\n"
-            f"> {log_message}"
+            f"{region_emoji} *{region_text}* :fire: *{config.loki.alert_name}*\n"
+            f"> App: {app_name}\n"
+            f"> Timestamp: {ts}\n"
+            f"> Message: {log_message}"
         )
         client = WebClient(token=config.slack.token)
         response = client.chat_postMessage(
