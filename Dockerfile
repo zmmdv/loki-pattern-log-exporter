@@ -9,7 +9,11 @@ RUN apk add --no-cache git
 COPY go.mod ./
 
 # Download dependencies
-RUN go mod download
+RUN go mod download && \
+    go get github.com/grafana/loki/pkg/logcli/client && \
+    go get github.com/grafana/loki/pkg/logcli/query && \
+    go get github.com/slack-go/slack && \
+    go get gopkg.in/yaml.v3
 
 # Copy source code
 COPY . .
