@@ -8,11 +8,8 @@ RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 # Copy go mod and sum files
 COPY go.mod ./
 
-# Download dependencies with latest versions
-RUN go mod download && \
-    go get github.com/grafana/loki && \
-    go get github.com/slack-go/slack && \
-    go get gopkg.in/yaml.v3
+# Download dependencies
+RUN go mod tidy && go mod download
 
 # Copy source code
 COPY . .
