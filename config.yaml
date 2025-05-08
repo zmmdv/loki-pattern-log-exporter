@@ -1,0 +1,9 @@
+loki:
+  endpoint: "http://localhost:3100"
+  query: '{job="your-job-name"}'
+  pattern: "error|exception|critical"
+  interval: "1m"
+
+slack:
+  token: "your-slack-token"
+  channel: "your-channel-id"
