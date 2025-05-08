@@ -9,13 +9,13 @@ RUN apk add --no-cache git
 COPY go.mod ./
 
 # Download dependencies
-RUN go mod download
+RUN go mod tidy && go mod download
 
 # Copy source code
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o loki-pattern-exporter
+RUN go mod tidy && CGO_ENABLED=0 GOOS=linux go build -o loki-pattern-exporter
 
 # Final stage
 FROM alpine:latest
