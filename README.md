@@ -1,124 +1,106 @@
 # Loki Pattern Log Exporter
 
-This application monitors Loki logs for specific patterns and sends notifications to Slack when matches are found.
+A Python application that monitors Loki logs for specific patterns and sends notifications to Slack when matches are found.
+
+## Features
+
+- Queries Loki logs using the HTTP API
+- Supports regex pattern matching in logs
+- Sends notifications to Slack
+- Prevents duplicate notifications within a time window
+- Configurable through YAML config file and environment variables
+- Docker support
 
 ## Prerequisites
 
-- Go 1.21 or later
-- Docker
-- Kubernetes cluster
-- Loki instance
-- Slack workspace with a bot token
+- Python 3.11 or higher
+- Access to a Loki instance
+- Slack workspace and bot token
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd loki-pattern-log-exporter
+```
+
+2. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
 
 ## Configuration
 
-The application can be configured using either environment variables or a `config.yaml` file. Environment variables take precedence over the config file.
-
-### Environment Variables
-
-```bash
-# Loki Configuration
-LOKI_ENDPOINT="http://localhost:3100"  # Loki endpoint
-LOKI_QUERY='{job="your-job-name"}'    # Loki query
-LOKI_PATTERN="error|exception|critical" # Pattern to match
-LOKI_INTERVAL="1m"                    # Check interval
-
-# Slack Configuration
-SLACK_TOKEN="your-slack-token"         # Slack bot token
-SLACK_CHANNEL="your-channel-id"        # Slack channel ID
-```
-
-### Config File
-
-Alternatively, you can use a `config.yaml` file with the following structure:
+Create a `config.yaml` file with the following structure:
 
 ```yaml
 loki:
-  endpoint: "http://localhost:3100"  # Loki endpoint
+  endpoint: "http://localhost:3100"  # Loki server endpoint
   query: '{job="your-job-name"}'    # Loki query
-  pattern: "error|exception|critical" # Pattern to match
-  interval: "1m"                    # Check interval
+  pattern: "error|exception|critical"  # Regex pattern to match
+  interval: "1m"                    # Check interval (e.g., "1m", "5m", "1h")
 
 slack:
-  token: "your-slack-token"         # Slack bot token
-  channel: "your-channel-id"        # Slack channel ID
+  token: "${SLACK_TOKEN}"           # Slack bot token
+  channel: "${SLACK_CHANNEL}"       # Slack channel ID
 ```
 
-## Building with Docker
+You can also set these values using environment variables:
+- `LOKI_ENDPOINT`
+- `LOKI_QUERY`
+- `LOKI_PATTERN`
+- `LOKI_INTERVAL`
+- `SLACK_TOKEN`
+- `SLACK_CHANNEL`
 
-### Single Architecture Build
+## Usage
+
+### Running Locally
+
 ```bash
-docker build -t loki-pattern-exporter:latest .
+python main.py --config config.yaml
 ```
 
-### Multi-Architecture Build
-The Dockerfile supports building for multiple architectures (AMD64, ARM64, and ARM). To build for multiple architectures:
+### Running with Docker
 
-1. Set up Docker buildx:
+1. Build the Docker image:
 ```bash
-docker buildx create --name mybuilder --use
+docker build -t loki-pattern-exporter .
 ```
 
-2. Build and push for multiple architectures:
+2. Run the container:
 ```bash
-docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 \
-  -t your-registry/loki-pattern-exporter:latest \
-  --push .
+docker run -e SLACK_TOKEN=your-token \
+           -e SLACK_CHANNEL=your-channel \
+           -e LOKI_ENDPOINT=http://your-loki:3100 \
+           loki-pattern-exporter
 ```
 
-Or build locally for your current architecture:
-```bash
-docker buildx build --load -t loki-pattern-exporter:latest .
-```
+## Development
 
-## Deploying to Kubernetes
+The application is structured as follows:
 
-1. Create the Kubernetes secret for Slack credentials:
-```bash
-# First, encode your Slack token and channel ID in base64
-echo -n "your-slack-token" | base64
-echo -n "your-channel-id" | base64
+- `main.py`: Main application code
+- `requirements.txt`: Python dependencies
+- `config.yaml`: Configuration file
+- `Dockerfile`: Docker configuration
 
-# Update the values in k8s/secrets.yaml with the base64 encoded values
-```
+### Key Components
 
-2. Apply the Kubernetes manifests:
-```bash
-kubectl apply -f k8s/secrets.yaml
-kubectl apply -f k8s/deployment.yaml
-```
+1. **MessageCache**: Prevents duplicate notifications within a configurable time window
+2. **Loki Query**: Uses Loki's HTTP API to query logs
+3. **Slack Integration**: Sends notifications using the Slack SDK
+4. **Configuration**: Supports both YAML and environment variables
 
-3. Verify the deployment:
-```bash
-kubectl get pods -l app=loki-pattern-exporter
-```
+## License
 
-## Running Locally
+[Your License]
 
-### Using Environment Variables
-```bash
-export LOKI_ENDPOINT="http://localhost:3100"
-export LOKI_QUERY='{job="your-job-name"}'
-export LOKI_PATTERN="error|exception|critical"
-export LOKI_INTERVAL="1m"
-export SLACK_TOKEN="your-slack-token"
-export SLACK_CHANNEL="your-channel-id"
-go run main.go
-```
+## Contributing
 
-### Using Config File
-1. Update the `config.yaml` with your settings
-2. Run the application:
-```bash
-go run main.go
-```
-
-## Security Notes
-
-- The application runs as a non-root user in the container
-- Sensitive credentials are stored in Kubernetes secrets
-- Resource limits are set to prevent resource exhaustion
-
-## Monitoring
-
-The application logs its activities to stdout, which can be collected by your logging infrastructure. 
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a new Pull Request 
