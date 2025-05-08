@@ -6,12 +6,16 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Create configuration directory
+RUN mkdir -p /app/configuration
+
 # Copy application code
 COPY main.py .
-COPY config.yaml .
 
-# Run as non-root user
+# Create non-root user
 RUN useradd -m -u 1000 appuser
+RUN chown -R appuser:appuser /app
+
 USER appuser
 
 ENTRYPOINT ["python", "main.py"] 

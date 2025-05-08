@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: log-generator
+  labels:
+    app: log-generator
+    job: test-logs
+spec:
+  containers:
+  - name: log-generator
+    image: busybox:latest
+    command: ["/bin/sh"]
+    args: ["-c", "while true; do echo '$(date) - Hello World! This is a test log message.'; sleep 5; done"]
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "100m"
+      limits:
+        memory: "128Mi"
+        cpu: "200m"

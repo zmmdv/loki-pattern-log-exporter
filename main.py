@@ -4,12 +4,17 @@ import time
 import yaml
 import logging
 import requests
+import glob
+import threading
 from datetime import datetime, timedelta
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 from typing import List, Dict, Optional
 from dataclasses import dataclass
 from collections import defaultdict
+from flask import Flask, jsonify
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Configure logging
 logging.basicConfig(
@@ -17,6 +22,29 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Initialize Flask app
+app = Flask(__name__)
+
+# Global state for health check
+app_state = {
+    'configs_loaded': False,
+    'last_check': None,
+    'error_count': 0,
+    'loki_connected': False,
+    'loki_connection_attempts': 0
+}
+
+# Configure retry strategy for requests
+retry_strategy = Retry(
+    total=3,  # number of retries
+    backoff_factor=1,  # wait 1, 2, 4 seconds between retries
+    status_forcelist=[500, 502, 503, 504]  # HTTP status codes to retry on
+)
+adapter = HTTPAdapter(max_retries=retry_strategy)
+http = requests.Session()
+http.mount("http://", adapter)
+http.mount("https://", adapter)
 
 @dataclass
 class LokiConfig:
@@ -34,161 +62,269 @@ class SlackConfig:
 class Config:
     loki: LokiConfig
     slack: SlackConfig
+    name: str  # Added name field to identify different configs
 
 class MessageCache:
-    def __init__(self, window_seconds: int = 300):  # 5 minutes default window
+    def __init__(self, window_minutes: int = 5):
+        self.window_minutes = window_minutes
         self.messages: Dict[str, datetime] = {}
-        self.window = timedelta(seconds=window_seconds)
 
-    def add(self, message: str) -> None:
+    def add_message(self, message: str):
         self.messages[message] = datetime.now()
+        self._cleanup()
 
-    def contains(self, message: str) -> bool:
-        if message in self.messages:
-            if datetime.now() - self.messages[message] < self.window:
-                return True
-            # Message exists but is expired, remove it
-            del self.messages[message]
+    def has_message(self, message: str) -> bool:
+        self._cleanup()
+        return message in self.messages
+
+    def _cleanup(self):
+        cutoff = datetime.now() - timedelta(minutes=self.window_minutes)
+        self.messages = {msg: time for msg, time in self.messages.items() if time > cutoff}
+
+def check_loki_connection(endpoint: str) -> bool:
+    """Check if Loki endpoint is accessible."""
+    try:
+        response = http.get(f"{endpoint}/ready", timeout=5)
+        response.raise_for_status()
+        app_state['loki_connected'] = True
+        app_state['loki_connection_attempts'] = 0
+        return True
+    except Exception as e:
+        logger.error(f"Failed to connect to Loki at {endpoint}: {str(e)}")
+        app_state['loki_connected'] = False
+        app_state['loki_connection_attempts'] += 1
         return False
 
-    def cleanup(self) -> None:
-        now = datetime.now()
-        expired = [msg for msg, timestamp in self.messages.items() 
-                  if now - timestamp > self.window]
-        for msg in expired:
-            del self.messages[msg]
-
-def load_config(config_path: str) -> Config:
-    # Default values
-    config = Config(
-        loki=LokiConfig(
-            endpoint="http://localhost:3100",
-            query='{job="your-job-name"}',
-            pattern="error|exception|critical",
-            interval="1m"
-        ),
-        slack=SlackConfig(
-            token="",
-            channel=""
-        )
-    )
-
-    # Load from config file if it exists
-    if os.path.exists(config_path):
-        with open(config_path, 'r') as f:
-            yaml_config = yaml.safe_load(f)
-            
-            if 'loki' in yaml_config:
-                loki_config = yaml_config['loki']
-                config.loki.endpoint = loki_config.get('endpoint', config.loki.endpoint)
-                config.loki.query = loki_config.get('query', config.loki.query)
-                config.loki.pattern = loki_config.get('pattern', config.loki.pattern)
-                config.loki.interval = loki_config.get('interval', config.loki.interval)
-            
-            if 'slack' in yaml_config:
-                slack_config = yaml_config['slack']
-                config.slack.token = slack_config.get('token', config.slack.token)
-                config.slack.channel = slack_config.get('channel', config.slack.channel)
-
-    # Override with environment variables
-    config.loki.endpoint = os.getenv('LOKI_ENDPOINT', config.loki.endpoint)
-    config.loki.query = os.getenv('LOKI_QUERY', config.loki.query)
-    config.loki.pattern = os.getenv('LOKI_PATTERN', config.loki.pattern)
-    config.loki.interval = os.getenv('LOKI_INTERVAL', config.loki.interval)
-    config.slack.token = os.getenv('SLACK_TOKEN', config.slack.token)
-    config.slack.channel = os.getenv('SLACK_CHANNEL', config.slack.channel)
-
-    # Validate required fields
-    if not config.slack.token:
-        raise ValueError("SLACK_TOKEN is required")
-    if not config.slack.channel:
-        raise ValueError("SLACK_CHANNEL is required")
-
-    return config
-
-def query_loki(config: Config, pattern: re.Pattern) -> List[str]:
-    # Calculate time range
-    end_time = datetime.now()
-    start_time = end_time - timedelta(minutes=1)  # Default to 1 minute window
+def wait_for_loki_connection(endpoint: str, max_attempts: int = 10) -> bool:
+    """Wait for Loki to become available with exponential backoff."""
+    attempt = 0
+    while attempt < max_attempts:
+        if check_loki_connection(endpoint):
+            logger.info("Successfully connected to Loki")
+            return True
+        
+        # Exponential backoff: 2^attempt seconds
+        wait_time = min(2 ** attempt, 60)  # Cap at 60 seconds
+        logger.info(f"Waiting {wait_time} seconds before next connection attempt...")
+        time.sleep(wait_time)
+        attempt += 1
     
-    # Convert to nanoseconds for Loki
-    start_ns = int(start_time.timestamp() * 1e9)
-    end_ns = int(end_time.timestamp() * 1e9)
+    logger.error(f"Failed to connect to Loki after {max_attempts} attempts")
+    return False
 
-    # Prepare query parameters
-    params = {
-        'query': config.loki.query,
-        'start': start_ns,
-        'end': end_ns,
-        'limit': 1000
-    }
-
+def load_config(config_path: str) -> List[Config]:
+    """Load configuration from a YAML file with environment variable support."""
+    configs = []
+    
     try:
-        response = requests.get(f"{config.loki.endpoint}/loki/api/v1/query_range", params=params)
+        with open(config_path, 'r') as f:
+            config_data = yaml.safe_load(f)
+            
+        # Get config name from filename
+        config_name = os.path.splitext(os.path.basename(config_path))[0]
+            
+        # Load Loki config with environment variable fallback
+        loki_config = LokiConfig(
+            endpoint=os.getenv('LOKI_ENDPOINT', config_data['loki']['endpoint']),
+            query=os.getenv('LOKI_QUERY', config_data['loki']['query']),
+            pattern=os.getenv('LOKI_PATTERN', config_data['loki']['pattern']),
+            interval=os.getenv('LOKI_INTERVAL', config_data['loki']['interval'])
+        )
+            
+        # Load Slack config with environment variable fallback
+        slack_config = SlackConfig(
+            token=os.getenv('SLACK_TOKEN', config_data['slack']['token']),
+            channel=os.getenv('SLACK_CHANNEL', config_data['slack']['channel'])
+        )
+            
+        configs.append(Config(
+            loki=loki_config,
+            slack=slack_config,
+            name=config_name
+        ))
+            
+    except Exception as e:
+        logger.error(f"Error loading config {config_path}: {str(e)}")
+        app_state['error_count'] += 1
+    
+    return configs
+
+def query_loki(config: Config) -> List[str]:
+    """Query Loki for logs matching the pattern."""
+    try:
+        # Check Loki connection before querying
+        if not app_state['loki_connected']:
+            if not wait_for_loki_connection(config.loki.endpoint):
+                return []
+
+        # Calculate the time range based on the interval
+        end_time = int(time.time() * 1e9)  # Current time in nanoseconds
+        interval_seconds = parse_interval(config.loki.interval)
+        start_time = end_time - (interval_seconds * 1e9)
+        
+        # Prepare the query
+        query_params = {
+            'query': config.loki.query,
+            'start': start_time,
+            'end': end_time,
+            'limit': 1000
+        }
+        
+        # Make the request to Loki
+        response = http.get(
+            f"{config.loki.endpoint}/loki/api/v1/query_range",
+            params=query_params,
+            timeout=10
+        )
         response.raise_for_status()
+        
+        # Parse the response
         data = response.json()
-
-        matches = []
-        for result in data.get('data', {}).get('result', []):
-            for value in result.get('values', []):
-                if pattern.search(value[1]):
-                    matches.append(f"Found pattern in log: {value[1]}")
-
-        return matches
+        if 'data' not in data or 'result' not in data['data']:
+            return []
+        
+        # Extract log lines and filter by pattern
+        pattern = re.compile(config.loki.pattern)
+        matching_logs = []
+        
+        for stream in data['data']['result']:
+            for value in stream['values']:
+                log_line = value[1]  # The log message is the second element
+                if pattern.search(log_line):
+                    matching_logs.append(log_line)
+        
+        return matching_logs
+        
     except requests.exceptions.RequestException as e:
-        logger.error(f"Error querying Loki: {e}")
+        logger.error(f"Error querying Loki: {str(e)}")
+        app_state['error_count'] += 1
+        app_state['loki_connected'] = False
+        return []
+    except Exception as e:
+        logger.error(f"Unexpected error querying Loki: {str(e)}")
+        app_state['error_count'] += 1
         return []
 
-def send_slack_notification(config: Config, messages: List[str], cache: MessageCache) -> None:
-    client = WebClient(token=config.slack.token)
+def parse_interval(interval: str) -> int:
+    """Parse interval string (e.g., '1m', '5m', '1h') into seconds."""
+    unit = interval[-1]
+    value = int(interval[:-1])
     
-    for msg in messages:
-        if cache.contains(msg):
-            logger.info(f"Skipping duplicate message: {msg}")
-            continue
+    if unit == 's':
+        return value
+    elif unit == 'm':
+        return value * 60
+    elif unit == 'h':
+        return value * 3600
+    else:
+        raise ValueError(f"Invalid interval unit: {unit}")
 
-        try:
-            response = client.chat_postMessage(
-                channel=config.slack.channel,
-                text=msg
-            )
-            cache.add(msg)
-            logger.info(f"Sent message to Slack: {msg}")
-        except SlackApiError as e:
-            logger.error(f"Error sending Slack message: {e}")
+def send_slack_notification(config: Config, message: str, cache: MessageCache):
+    """Send notification to Slack if message hasn't been sent recently."""
+    if cache.has_message(message):
+        return
+        
+    try:
+        client = WebClient(token=config.slack.token)
+        response = client.chat_postMessage(
+            channel=config.slack.channel,
+            text=f"*{config.name} - Pattern Match Found*\n```{message}```"
+        )
+        if response['ok']:
+            cache.add_message(message)
+            logger.info(f"Notification sent to Slack for config {config.name}")
+    except SlackApiError as e:
+        logger.error(f"Error sending Slack notification: {str(e)}")
+        app_state['error_count'] += 1
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for Kubernetes liveness probe."""
+    if not app_state['configs_loaded']:
+        return jsonify({
+            'status': 'error',
+            'message': 'No configurations loaded'
+        }), 503
+    
+    if app_state['error_count'] > 10:  # Too many errors
+        return jsonify({
+            'status': 'error',
+            'message': f'Too many errors: {app_state["error_count"]}'
+        }), 503
+    
+    if not app_state['loki_connected']:
+        return jsonify({
+            'status': 'error',
+            'message': 'Loki connection lost',
+            'connection_attempts': app_state['loki_connection_attempts']
+        }), 503
+    
+    return jsonify({
+        'status': 'healthy',
+        'configs_loaded': app_state['configs_loaded'],
+        'last_check': app_state['last_check'],
+        'error_count': app_state['error_count'],
+        'loki_connected': app_state['loki_connected']
+    }), 200
+
+def run_flask():
+    """Run the Flask application."""
+    app.run(host='0.0.0.0', port=8080)
 
 def main():
-    import argparse
-    parser = argparse.ArgumentParser(description='Loki Pattern Log Exporter')
-    parser.add_argument('--config', default='config.yaml', help='path to config file')
-    args = parser.parse_args()
-
-    try:
-        config = load_config(args.config)
-        pattern = re.compile(config.loki.pattern)
-        cache = MessageCache()
-
-        while True:
-            matches = query_loki(config, pattern)
-            if matches:
-                send_slack_notification(config, matches, cache)
+    # Create configuration directory if it doesn't exist
+    config_dir = "/app/configuration"
+    os.makedirs(config_dir, exist_ok=True)
+    
+    # Initialize message cache
+    cache = MessageCache()
+    
+    # Load all configuration files
+    config_files = glob.glob(os.path.join(config_dir, "*.yaml"))
+    if not config_files:
+        logger.error(f"No configuration files found in {config_dir}")
+        app_state['configs_loaded'] = False
+    else:
+        configs = []
+        for config_file in config_files:
+            configs.extend(load_config(config_file))
+        
+        if not configs:
+            logger.error("No valid configurations loaded")
+            app_state['configs_loaded'] = False
+        else:
+            logger.info(f"Loaded {len(configs)} configuration(s)")
+            app_state['configs_loaded'] = True
             
-            # Parse interval (e.g., "1m", "5m", "1h")
-            interval_str = config.loki.interval
-            if interval_str.endswith('m'):
-                interval = int(interval_str[:-1]) * 60
-            elif interval_str.endswith('h'):
-                interval = int(interval_str[:-1]) * 3600
-            else:
-                interval = int(interval_str)
+            # Start the main loop in a separate thread
+            def run_main_loop():
+                while True:
+                    for config in configs:
+                        try:
+                            # Query Loki for matching logs
+                            matching_logs = query_loki(config)
+                            
+                            # Send notifications for each matching log
+                            for log in matching_logs:
+                                send_slack_notification(config, log, cache)
+                                
+                        except Exception as e:
+                            logger.error(f"Error processing config {config.name}: {str(e)}")
+                            app_state['error_count'] += 1
+                    
+                    # Update last check time
+                    app_state['last_check'] = datetime.now().isoformat()
+                    
+                    # Sleep for the shortest interval among all configs
+                    min_interval = min(parse_interval(config.loki.interval) for config in configs)
+                    time.sleep(min_interval)
             
-            time.sleep(interval)
-            cache.cleanup()
-
-    except KeyboardInterrupt:
-        logger.info("Shutting down...")
-    except Exception as e:
-        logger.error(f"Error: {e}")
+            # Start the main loop in a separate thread
+            main_thread = threading.Thread(target=run_main_loop, daemon=True)
+            main_thread.start()
+    
+    # Start the Flask application
+    run_flask()
 
 if __name__ == "__main__":
     main() 
