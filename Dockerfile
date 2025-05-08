@@ -3,7 +3,7 @@ FROM golang:latest AS builder
 WORKDIR /app
 
 # Install git for go mod download
-RUN apk add --no-cache git
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 # Copy go mod and sum files
 COPY go.mod ./
@@ -21,7 +21,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o loki-pattern-exporter
 
 # Final stage
-FROM alpine:latest
+FROM debian:latest
 
 WORKDIR /app
 
@@ -30,7 +30,7 @@ COPY --from=builder /app/loki-pattern-exporter .
 COPY --from=builder /app/config.yaml .
 
 # Run as non-root user
-RUN adduser -D -g '' appuser
+RUN useradd -m -u 1000 appuser
 USER appuser
 
 ENTRYPOINT ["./loki-pattern-exporter"] 
