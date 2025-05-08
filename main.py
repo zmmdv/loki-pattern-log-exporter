@@ -6,6 +6,7 @@ import logging
 import requests
 import glob
 import threading
+import urllib.parse
 from datetime import datetime, timedelta
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
@@ -162,12 +163,17 @@ def query_loki(config: Config) -> List[str]:
         interval_seconds = parse_interval(config.loki.interval)
         start_time = end_time - (interval_seconds * 1e9)
         
-        # Prepare the query
+        # Construct the query with proper encoding
+        base_query = config.loki.query
+        if config.loki.pattern != ".*":  # Only add pattern if it's not the default
+            base_query = f"{base_query} |~ \"{config.loki.pattern}\""
+        
+        # Prepare the query parameters
         query_params = {
-            'query': config.loki.query,
-            'start': start_time,
-            'end': end_time,
-            'limit': 1000
+            'query': base_query,
+            'start': str(start_time),  # Convert to string to avoid scientific notation
+            'end': str(end_time),      # Convert to string to avoid scientific notation
+            'limit': '1000'
         }
         
         # Make the request to Loki
@@ -183,15 +189,12 @@ def query_loki(config: Config) -> List[str]:
         if 'data' not in data or 'result' not in data['data']:
             return []
         
-        # Extract log lines and filter by pattern
-        pattern = re.compile(config.loki.pattern)
+        # Extract log lines
         matching_logs = []
-        
         for stream in data['data']['result']:
             for value in stream['values']:
                 log_line = value[1]  # The log message is the second element
-                if pattern.search(log_line):
-                    matching_logs.append(log_line)
+                matching_logs.append(log_line)
         
         return matching_logs
         
