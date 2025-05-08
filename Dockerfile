@@ -1,10 +1,4 @@
-# syntax=docker/dockerfile:1.4
-FROM --platform=$BUILDPLATFORM golang:1.21-alpine AS builder
-
-ARG TARGETPLATFORM
-ARG BUILDPLATFORM
-ARG TARGETARCH
-ARG TARGETVARIANT
+FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
@@ -20,26 +14,11 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Set build arguments based on target platform
-RUN case ${TARGETARCH} in \
-    "amd64") \
-        GOARCH=amd64 \
-        ;; \
-    "arm64") \
-        GOARCH=arm64 \
-        ;; \
-    "arm") \
-        GOARCH=arm \
-        GOARM=${TARGETVARIANT#v} \
-        ;; \
-    *) \
-        echo "Unsupported architecture: ${TARGETARCH}" && exit 1 \
-        ;; \
-    esac && \
-    CGO_ENABLED=0 GOOS=linux GOARCH=${GOARCH} GOARM=${GOARM:-} go build -o loki-pattern-exporter
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -o loki-pattern-exporter
 
 # Final stage
-FROM --platform=$TARGETPLATFORM alpine:latest
+FROM alpine:latest
 
 WORKDIR /app
 
