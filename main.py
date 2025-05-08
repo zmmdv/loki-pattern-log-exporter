@@ -127,8 +127,8 @@ def load_config(config_path: str) -> List[Config]:
         # Load Loki config with environment variable fallback
         loki_config = LokiConfig(
             endpoint=os.getenv('LOKI_ENDPOINT', config_data['loki']['endpoint']),
-            query=os.getenv('LOKI_QUERY', config_data['loki']['query']),
-            pattern=os.getenv('LOKI_PATTERN', config_data['loki'].get('pattern', '.*')),  # Default to '.*' if not specified
+            query=os.getenv('LOKI_QUERY', config_data['loki']['query']).strip(),  # Strip whitespace
+            pattern=os.getenv('LOKI_PATTERN', config_data['loki'].get('pattern', '.*')),
             interval=os.getenv('LOKI_INTERVAL', config_data['loki']['interval'])
         )
             
@@ -164,17 +164,23 @@ def query_loki(config: Config) -> List[str]:
         start_time = end_time - (interval_seconds * 1e9)
         
         # Construct the query with proper encoding
-        base_query = config.loki.query
+        base_query = config.loki.query.strip()
         if config.loki.pattern != ".*":  # Only add pattern if it's not the default
-            base_query = f"{base_query} |~ \"{config.loki.pattern}\""
+            # Escape special characters in the pattern
+            escaped_pattern = re.escape(config.loki.pattern)
+            base_query = f'{base_query} |~ "{escaped_pattern}"'
         
-        # Prepare the query parameters
+        # Prepare the query parameters with proper timestamp formatting
         query_params = {
             'query': base_query,
-            'start': str(start_time),  # Convert to string to avoid scientific notation
-            'end': str(end_time),      # Convert to string to avoid scientific notation
+            'start': f"{start_time}",  # Use f-string to avoid scientific notation
+            'end': f"{end_time}",      # Use f-string to avoid scientific notation
             'limit': '1000'
         }
+        
+        # Log the actual query for debugging
+        logger.debug(f"Loki query: {base_query}")
+        logger.debug(f"Query params: {query_params}")
         
         # Make the request to Loki
         response = http.get(
@@ -200,6 +206,8 @@ def query_loki(config: Config) -> List[str]:
         
     except requests.exceptions.RequestException as e:
         logger.error(f"Error querying Loki: {str(e)}")
+        if hasattr(e.response, 'text'):
+            logger.error(f"Response text: {e.response.text}")
         app_state['error_count'] += 1
         app_state['loki_connected'] = False
         return []
