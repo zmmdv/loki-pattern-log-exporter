@@ -169,12 +169,13 @@ def send_slack_notification(config: Config, log_entry: tuple, cache: MessageCach
         ts = datetime.fromtimestamp(int(timestamp_ns) / 1e9).strftime('%Y-%m-%d %H:%M:%S')
         # Extract app name
         app_name = extract_app_from_query(config.loki.query)
+        # Choose emoji for region (customize as needed)
+        region_emoji = ":us:" if "us" in config.loki.region.lower() else ":earth_americas:"
         # Format Slack message
         slack_text = (
-            f"*Region:* {config.loki.region}\n"
-            f"*Timestamp:* {ts}\n"
-            f"*Service:* {app_name}\n"
-            f"*Message:* ```{log_message}```"
+            f"{region_emoji} *{config.loki.region} | {app_name}*  :fire: *PatternMatchFound*\n"
+            f"> *{ts}*\n"
+            f"> {log_message}"
         )
         client = WebClient(token=config.slack.token)
         response = client.chat_postMessage(
