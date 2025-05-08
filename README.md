@@ -1,0 +1,1 @@
+# loki-pattern-log-exporter
