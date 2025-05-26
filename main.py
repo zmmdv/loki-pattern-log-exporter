@@ -222,9 +222,11 @@ def query_loki(config: Config) -> List[tuple]:
         # Construct the query with proper encoding
         base_query = config.loki.query.strip()
         if config.loki.pattern != ".*":  # Only add pattern if it's not the default
-            # Escape special characters in the pattern
-            escaped_pattern = re.escape(config.loki.pattern)
-            base_query = f'{base_query} |~ "{escaped_pattern}"'
+            # Replace spaces with \s+ for Loki's LogQL syntax
+            pattern = config.loki.pattern.replace(" ", "\\s+")
+            # Escape other special characters that need escaping in LogQL
+            pattern = pattern.replace("\\", "\\\\").replace('"', '\\"')
+            base_query = f'{base_query} |~ "{pattern}"'
         
         # Prepare the query parameters with proper timestamp formatting
         query_params = {

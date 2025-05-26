@@ -12,7 +12,7 @@ spec:
   - name: log-generator
     image: busybox:latest
     command: ["/bin/sh"]
-    args: ["-c", "while true; do echo \"$(date) - Hello World! This is a test log message.\"; sleep 5; done"]
+    args: ["-c", "while true; do echo '$(date) - Hello World! This is a test log message.'; sleep 25; done"]
     resources:
       requests:
         memory: "64Mi"
